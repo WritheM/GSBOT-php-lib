@@ -1,8 +1,9 @@
 <?php
+header('Access-Control-Allow-Origin: *');
 
-include_once('config.php');
-include_once('database.php');
-include('header.inc'); 
+require_once('config.php');
+require_once('database.php');
+
 try
 {
     $db = new Database(
@@ -11,136 +12,145 @@ try
         $cfg['db']['user'],
         $cfg['db']['pass']
     );
+}
+catch (Exception $e)
+{
+    print_r($e->getMessage());
+    die();
+}
 
-    $query = 'SELECT h.songName,h.artistName,SUM(h.upVotes) as UpVotes, SUM(h.downVotes) as DownVotes, SUM(h.upVotes)-SUM(h.downVotes) as VoteSum, COUNT(h.broadcastSongID) as PlayCount, (SUM(h.upVotes)-SUM(h.downVotes)) / COUNT(h.broadcastSongID) as VotesPerPlay, b.name as broadcastUser
-    FROM songHistory AS h
-    LEFT JOIN broadcasts AS b ON h.userID = b.userID
-    WHERE b.name = \'writhem\'
-    AND timestamp BETWEEN DATE_SUB(NOW(), INTERVAL 7 DAY) and NOW()
+// validate the uid and key combo. this user must have access to the api to use it.
+if (isset($_GET['key'])) {
+    // try to validate with a get key
+    if (validate_apiKey($db, $_GET['key'], $_GET['userid'])) {
+        //echo "key accepted"; // silently!
+    }
+    else {
+        die("invalid-key");
+    }
+} else if (isset($_POST['key'])) {
+    // try to validate with a post key
+    if (validate_apiKey($db, $_POST['key'], $_POST['userid'])) {
+        //echo "key accepted"; // silently!
+    }
+    else {
+        die("invalid-key");
+    }
+} else {
+    // all else failed, must be a json key.
+    $request_body = file_get_contents('php://input');
+    $data = json_decode($request_body);
+
+    if (validate_apiKey($db, $data->key, $data->uID))
+    {
+        //echo "key accepted"; // silently!
+    }
+    else {
+        die("invalid-key");
+    }
+}
+
+if (isset($_GET['getStats'])) {
+    getStats($db);
+} else if (isset($_GET['saveSong'])) {
+    saveSong($db);
+}
+
+function getStats($db) {
+    $query = 'SELECT h.songName,h.artistName,SUM(h.upVotes) as UpVotes, SUM(h.downVotes) as DownVotes, SUM(h.upVotes)-SUM(h.downVotes) as VoteSum, COUNT(h.broadcastSongID) as PlayCount, SUM(h.listens) as TotalListens, (SUM(h.upVotes)-SUM(h.downVotes)) / COUNT(h.broadcastSongID) as VotesPerPlay
+    FROM gsdb_songHistory AS h
+    WHERE userID = :userid
+    AND songID = :songid
+    AND timestamp BETWEEN DATE_SUB(NOW(), INTERVAL 30 DAY) and NOW()
     GROUP BY h.SongID
     ORDER BY VotesPerPlay DESC
-    LIMIT 0, 25';
+    LIMIT 0, 1';
 
-    $rows = $db->select($query);
-    ?>
-Below is the table of the top 25 voted songs played in the last 7 days. It is clear that voting on songs while listening to WritheM Radio actually does mean something. We look at the stats and then make decisions about the type of music we continue to play based on your votes. Click the table headers to change the sort order, knowing that it's only pulling data of the top 25 by Vote per Play (VpP).
-<table class="confluenceTable tablesorter">
-    <thead>
-        <tr class="sortableHeader">
-            <th class="confluenceTh sortableHeader" data-column="0">
-                <div class="tablesorter-header-inner">Song Name</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="1">
-                <div class="tablesorter-header-inner">Artist Name</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="2">
-                <div class="tablesorter-header-inner">Total UpVotes</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="3">
-                <div class="tablesorter-header-inner">Total DownVotes</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="4">
-                <div class="tablesorter-header-inner">Total VoteSum</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="5">
-                <div class="tablesorter-header-inner">PlayCount</div>
-            </th>
-            <th class="confluenceTh sortableHeader tablesorter-headerSortDown" data-column="6">
-                <div class="tablesorter-header-inner">VoteSum Average (VpP)</div>
-            </th>
-        </tr>
-    </thead>
-    <tbody class>
-    <?    foreach($rows as $song)     {
-        echo "        <tr>\n";
-        echo "            <td class=\"confluenceTd\">".$song['songName']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['artistName']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['UpVotes']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['DownVotes']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['VoteSum']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['PlayCount']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['VotesPerPlay']."</td>\n";
-        echo "        </tr>\n";
+    $params = new QueryParameters();
+    $params->addParameter(':userid',$_GET['userid']);
+    $params->addParameter(':songid',$_GET['songid']);
+
+    $rows = $db->select($query, $params);
+
+    if (count($rows) > 0 ) {
+        $songStats = array(
+            "songName" => $rows[0]['songName'],
+            "artistName" => $rows[0]['artistName'],
+            "totalUpVotes" => $rows[0]['UpVotes'],
+            "totalDownVotes" => $rows[0]['DownVotes'],
+            "totalVoteSum" => $rows[0]['VoteSum'],
+            "playCount" => $rows[0]['PlayCount'],
+            "totalListens" => $rows[0]['TotalListens'],
+            "votesPerPlay" => $rows[0]['VotesPerPlay']
+        );
+
+        echo "Vote Stats for '{$songStats['songName']}' by '{$songStats['artistName']}' for the last 30 days are: ";
+        echo "Played {$songStats['playCount']} time" . ($songStats['playCount']>1?"s":"") . " | Heard {$songStats['totalListens']} time" . ($songStats['totalListens']>1?"s":"") . " | TotalVoteSum (TVS): {$songStats['totalVoteSum']} | VotesPerPlay (VpP): {$songStats['votesPerPlay']}\n";
     }
-    echo "    </tbody>";
-    echo "</table>";
+    else {
+        echo "It appears that the specified song has not been played before or we don't have any record of it playing in the last 30 days. Keep in mind that song records are only saved when they finish playing.";
+    }
 
 }
-catch (Exception $e) 
-{
-    print_r($e->getMessage());
-    die();
-}
-echo "<br/>\n";
-try
-{
-    $db = new Database(
-        $cfg['db']['host'],
-        $cfg['db']['dbase'],
-        $cfg['db']['user'],
-        $cfg['db']['pass']
-    );
 
-    $query = 'SELECT h.songName,h.artistName,SUM(h.upVotes) as UpVotes, SUM(h.downVotes) as DownVotes, SUM(h.upVotes)-SUM(h.downVotes) as VoteSum, COUNT(h.broadcastSongID) as PlayCount, (SUM(h.upVotes)-SUM(h.downVotes)) / COUNT(h.broadcastSongID) as VotesPerPlay, b.name as broadcastUser
-    FROM songHistory AS h
-    LEFT JOIN broadcasts AS b ON h.userID = b.userID
-    WHERE b.name = \'writhem\'
-    AND timestamp BETWEEN DATE_SUB(NOW(), INTERVAL 7 DAY) and NOW()
-    GROUP BY h.SongID
-    ORDER BY VotesPerPlay ASC
-    LIMIT 0, 10';
+function saveSong($db) {
+    require_once('config.php');
+    require_once('database.php');
 
-    $rows = $db->select($query);
-    ?>
-Below is the table of the bottom 10 voted songs played in the last 7 days. Click the table headers to change the sort order, knowing that it's only pulling data of the bottom 10 by Vote per Play (VpP).
-<table class="confluenceTable tablesorter">
-    <thead>
-        <tr class="sortableHeader">
-            <th class="confluenceTh sortableHeader" data-column="0">
-                <div class="tablesorter-header-inner">Song Name</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="1">
-                <div class="tablesorter-header-inner">Artist Name</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="2">
-                <div class="tablesorter-header-inner">Total UpVotes</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="3">
-                <div class="tablesorter-header-inner">Total DownVotes</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="4">
-                <div class="tablesorter-header-inner">Total VoteSum</div>
-            </th>
-            <th class="confluenceTh sortableHeader" data-column="5">
-                <div class="tablesorter-header-inner">PlayCount</div>
-            </th>
-            <th class="confluenceTh sortableHeader tablesorter-headerSortDown" data-column="6">
-                <div class="tablesorter-header-inner">VoteSum Average (VpP)</div>
-            </th>
-        </tr>
-    </thead>
-    <tbody class>
-    <?
-    foreach($rows as $song) 
+    $request_body = file_get_contents('php://input');
+    $data = json_decode($request_body);
+
+    $parms = new QueryParameters();
+    $parms->addParameter(':broadcastSongID',$data->bcSID);
+    $parms->addParameter(':userID',$data->uID);
+    $parms->addParameter(':songID',$data->sID);
+    $parms->addParameter(':songName',$data->sN);
+    $parms->addParameter(':artistID',$data->arID);
+    $parms->addParameter(':artistName',$data->arN);
+    $parms->addParameter(':albumID',$data->alID);
+    $parms->addParameter(':albumName',$data->alN);
+    $parms->addParameter(':votes',count($data->h->up)-count($data->h->down));
+    $parms->addParameter(':upVotes',count($data->h->up));
+    $parms->addParameter(':downVotes',count($data->h->down));
+    $parms->addParameter(':listens',$data->l);
+    $parms->addParameter(':estimateDuration',$data->estD);
+
+    $query = "INSERT INTO  gsdb_songHistory (broadcastSongID, userID, songID,
+                songName, artistID, artistName, albumID, albumName, votes, upVotes, downVotes,
+                listens, estimateDuration)
+            VALUES (:broadcastSongID,  :userID, :songID,
+                :songName, :artistID, :artistName, :albumID, :albumName, :votes, :upVotes, :downVotes,
+                :listens, :estimateDuration)
+            ON DUPLICATE KEY UPDATE votes=:votes, upVotes=:upVotes, downVotes=:downVotes;";
+
+    try
     {
-        echo "        <tr>\n";
-        echo "            <td class=\"confluenceTd\">".$song['songName']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['artistName']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['UpVotes']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['DownVotes']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['VoteSum']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['PlayCount']."</td>\n";
-        echo "            <td class=\"confluenceTd\">".$song['VotesPerPlay']."</td>\n";
-        echo "        </tr>\n";
+        $result = $db->execute($query, $parms);
     }
-    echo "    </tbody>";
-    echo "</table>";
+    catch (Exception $e)
+    {
+        print_r($e->getMessage());
+    }
 
-}
-catch (Exception $e) 
-{
-    print_r($e->getMessage());
-    die();
+    //echo "data captured for '{$data->sN} - {$data->aN}'";
 }
 
-include('footer.inc');
+function validate_apiKey($db, $key, $uid) {
+    $query = 'SELECT id, gs_uid, valCode
+    FROM gsdb_users
+    WHERE apiKey = :key
+    AND gs_uid = :uid
+    LIMIT 0, 1';
+
+    $params = new QueryParameters();
+    $params->addParameter(':key',$key);
+    $params->addParameter(':uid',$uid);
+
+    $rows = $db->select($query, $params);
+
+    //TODO update this to end and die here, instead of redundant checks above.
+    if (count($rows) > 0)
+        return true;
+    else
+        return false;
+}
