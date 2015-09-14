@@ -31,6 +31,7 @@ $hardBoiledEggs = array(
   "recursion"=>"Did you mean /wa recursion?",
   "shark community"=>"shameless-plug-begin: http://sharkcommunity.com/ Come talk with your fellow listeners and other broadcasters on the Grooveshark Community Forums now!",
   "say my name"=>"... but there are people around me, and yes. I'm cheating on you!",
+  "skankerveen"=>"drives the best van ever made and is not a casual ok."
   "skip"=>"... to my loo, my darling!",
   "song is this"=>"Why don't you try using your brain to figure out what song this is? maybe it's dududu?",
   "sudo make me a sandwich"=>"okay.", "Make me a sandwich"=>"*poof* You're a sandwhich",
